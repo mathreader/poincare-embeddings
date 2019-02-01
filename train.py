@@ -50,8 +50,10 @@ def train(model, data, optimizer, opt, log, rank=1, queue=None):
             loss = model.loss(preds, targets, size_average=True)
             loss.backward()
             optimizer.step(lr=lr)
-            #epoch_loss.append(loss.data[0])
-            epoch_loss.append(loss.item())
+            try:
+                epoch_loss.append(loss.data[0])
+            except:
+                epoch_loss.append(loss.item())
         if rank == 1:
             emb = None
             if epoch == (opt.epochs - 1) or epoch % opt.eval_each == (opt.eval_each - 1):
