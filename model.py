@@ -144,6 +144,7 @@ class GraphDataset(Dataset):
         for i in range(idx.size(0)):
             t, h, w = self.idx[i]
             self._counts[h] += w
+            t = t.item()
             self._weights[t][h] += w
         self._weights = dict(self._weights)
         nents = int(np.array(list(self._weights.keys())).max() + 1)
@@ -172,6 +173,7 @@ class SNGraphDataset(GraphDataset):
     def __getitem__(self, i):
         t, h, _ = self.idx[i]
         negs = set()
+        t = t.item()
         ntries = 0
         nnegs = self.nnegs
         if self.burnin:
