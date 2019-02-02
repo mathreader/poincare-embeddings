@@ -14,47 +14,67 @@ from torch.autograd import Function, Variable
 from torch.utils.data import Dataset
 from collections import defaultdict as ddict
 
+# Threshold for clamping the denominator of a function.
 eps = 1e-5
 
 
 class Arcosh(Function):
+    # Define the arccosh function that is used in equation (1).
+    
     def __init__(self, eps=eps):
         super(Arcosh, self).__init__()
         self.eps = eps
 
     def forward(self, x):
+        # Forward is just the definition of $cosh^{-1}$.
         self.z = th.sqrt(x * x - 1)
         return th.log(x + self.z)
 
     def backward(self, g):
+        # Use clamping to avoid numerical issues with division?
         z = th.clamp(self.z, min=eps)
         z = g / z
         return z
 
 
 class PoincareDistance(Function):
+    
     boundary = 1 - eps
-
+    
+    # This implements equation (3) and (4) in the paper for finding derivative of Poincare distance.
+    # v is essentially just $\theta$ in the paper.
+    # sqnormx is $\|\x\|$, sqnormv is $\|\theta\|$, sqdist is $\|\theta-x\|$.
     def grad(self, x, v, sqnormx, sqnormv, sqdist):
         alpha = (1 - sqnormx)
         beta = (1 - sqnormv)
+        # z is the same as $\gamma$ in equation (3).
         z = 1 + 2 * sqdist / (alpha * beta)
+        # unsqueeze to make a value into a tensor, and expand_as to make it same shape as x.
+        # the following two lines just calculate the second parentheses part of (4).
         a = ((sqnormv - 2 * th.sum(x * v, dim=-1) + 1) / th.pow(alpha, 2)).unsqueeze(-1).expand_as(x)
         a = a * x - v / alpha.unsqueeze(-1).expand_as(v)
+        
+        # This calculates the first half of (4), with clamping to prevent dividing by 0.
         z = th.sqrt(th.pow(z, 2) - 1)
         z = th.clamp(z * beta, min=eps).unsqueeze(-1)
         return 4 * a / z.expand_as(x)
 
+    
+    # This implements equation (1) in the paper for calculating Poincare distance.
     def forward(self, u, v):
         self.save_for_backward(u, v)
+        # This implements everything in the parentheses
         self.squnorm = th.clamp(th.sum(u * u, dim=-1), 0, self.boundary)
         self.sqvnorm = th.clamp(th.sum(v * v, dim=-1), 0, self.boundary)
         self.sqdist = th.sum(th.pow(u - v, 2), dim=-1)
         x = self.sqdist / ((1 - self.squnorm) * (1 - self.sqvnorm)) * 2 + 1
-        # arcosh
+        
+        # This implements arccosh
         z = th.sqrt(th.pow(x, 2) - 1)
         return th.log(x + z)
-
+    
+    # Backpropagation formulas for both $\frac{\partial d}{\partial \theta}d(\theta, x)$
+    # and $\frac{\partial d}{\partial \theta}d(x, \theta)$
     def backward(self, g):
         u, v = self.saved_tensors
         g = g.unsqueeze(-1)
@@ -64,6 +84,8 @@ class PoincareDistance(Function):
 
 
 class EuclideanDistance(nn.Module):
+    # Implements the basic Euclidean distance $d(u, v)=\|u-v\|^{2}$
+    
     def __init__(self, radius=1, dim=None):
         super(EuclideanDistance, self).__init__()
 
@@ -72,6 +94,9 @@ class EuclideanDistance(nn.Module):
 
 
 class TranseDistance(nn.Module):
+    # This seems to be the Translational distance function $d(u, v)=\|u-v+r\|^{2}$.
+    # See paper "Translating Embeddings for Modeling Multi-relational Data", NIPS 2013
+    
     def __init__(self, radius=1, dim=None):
         super(TranseDistance, self).__init__()
         self.r = nn.Parameter(th.randn(dim).view(1, dim))
@@ -87,6 +112,8 @@ class TranseDistance(nn.Module):
 
 
 class Embedding(nn.Module):
+    # The general embedding class.
+    
     def __init__(self, size, dim, dist=PoincareDistance, max_norm=1):
         super(Embedding, self).__init__()
         self.dim = dim
@@ -99,9 +126,10 @@ class Embedding(nn.Module):
         self.dist = dist
         self.init_weights()
 
+    # weights are initialized from the uniform distribution $U(-0.0001, 0.0001)$
     def init_weights(self, scale=1e-4):
         self.lt.state_dict()['weight'].uniform_(-scale, scale)
-
+    
     def forward(self, inputs):
         e = self.lt(inputs)
         fval = self._forward(e)
@@ -112,6 +140,8 @@ class Embedding(nn.Module):
 
 
 class SNEmbedding(Embedding):
+    # Network Embeddings 
+    
     def __init__(self, size, dim, dist=PoincareDistance, max_norm=1):
         super(SNEmbedding, self).__init__(size, dim, dist, max_norm)
         self.lossfn = nn.CrossEntropyLoss
